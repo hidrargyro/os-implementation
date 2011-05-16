@@ -224,11 +224,10 @@ static int Floppy_Close(struct Block_Device *dev)
 static int Floppy_Get_Num_Blocks(struct Block_Device *dev)
 {
     struct Floppy_Drive *drive;
-    struct Floppy_Parameters *params;
+    struct Floppy_Parameters *params = drive->params;
 
     KASSERT(dev->unit >= 0 && dev->unit <= 1);
     drive = &s_driveTable[dev->unit];
-    params = drive->params;
 
     params = drive->params;
     KASSERT(params != 0);

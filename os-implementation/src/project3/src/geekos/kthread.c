@@ -16,7 +16,23 @@
 #include <geekos/string.h>
 #include <geekos/kthread.h>
 #include <geekos/malloc.h>
+#include <geekos/user.h>
 
+
+
+/*
+ * scheduling policies
+ */
+#define RR  0
+#define MLF 1
+
+
+#define TIME_TO_STARVATION_CHECK 100000
+int g_currentSchedulingPolicy = RR;
+int g_prevSchedulingPolicy = RR;
+
+
+static struct Kernel_Thread *IdleThread;
 
 /* ----------------------------------------------------------------------
  * Private data
@@ -222,7 +238,7 @@ static void Push_General_Registers(struct Kernel_Thread* kthread)
      */
     Push(kthread, 0);  /* eax */
     Push(kthread, 0);  /* ebx */
-    Push(kthread, 0);  /* edx */
+    Push(kthread, 0);  /* ecx */
     Push(kthread, 0);  /* edx */
     Push(kthread, 0);  /* esi */
     Push(kthread, 0);  /* edi */
@@ -315,7 +331,47 @@ static void Setup_Kernel_Thread(
      * - The esi register should contain the address of
      *   the argument block
      */
-    TODO("Create a new thread to execute in user mode");
+    Attach_User_Context(kthread, userContext);
+
+    /* ushort_t dsSelector */
+    Push(kthread, userContext->dsSelector);
+
+    /* Stack pointer */
+    Push(kthread, (userContext->stackPointerAddr));
+    /*
+     * The EFLAGS register will have all bits clear.
+     * The important constraint is that we want to have the IF
+     * bit clear, so that interrupts are disabled when the
+     * thread starts.
+     */
+    Push(kthread, 0UL); /* EFLAGS */
+
+    /* ushort_t csSelector */
+    Push(kthread, userContext->csSelector);
+
+    /* Push the address of the start function. */
+    Push(kthread, userContext->entryAddr);
+
+    /* Push fake error code and interrupt number. */
+    Push(kthread, 0UL);
+    Push(kthread, 0UL);
+
+    /* Push initial values for general-purpose registers. */
+    Push(kthread, 0UL); /* eax */
+    Push(kthread, 0UL); /* ebx */
+    Push(kthread, 0UL); /* ecx */
+    Push(kthread, 0UL); /* edx */
+    Push(kthread, userContext->argBlockAddr); /* esi */
+    Push(kthread, 0UL); /* edi */
+    Push(kthread, 0UL); /* ebp */
+    /*
+     * Push values for saved segment registers.
+     * Only the ds and es registers will contain valid selectors.
+     */
+    Push(kthread, (ulong_t)userContext->dsSelector); /* ds */
+    Push(kthread, (ulong_t)userContext->dsSelector); /* es */
+    Push(kthread, (ulong_t)userContext->dsSelector); /* fs */
+    Push(kthread, (ulong_t)userContext->dsSelector); /* gs */
 }
 
 
@@ -459,7 +515,7 @@ void Init_Scheduler(void)
      * Create the idle thread.
      */
     /*Print("starting idle thread\n");*/
-    Start_Kernel_Thread(Idle, 0, PRIORITY_IDLE, true);
+    IdleThread = Start_Kernel_Thread(Idle, 0, PRIORITY_IDLE, true);
 
     /*
      * Create the reaper thread.
@@ -509,6 +565,7 @@ struct Kernel_Thread* Start_Kernel_Thread(
 struct Kernel_Thread*
 Start_User_Thread(struct User_Context* userContext, bool detached)
 {
+	KASSERT(userContext != NULL);
     /*
      * Hints:
      * - Use Create_Thread() to create a new "raw" thread object
@@ -517,7 +574,19 @@ Start_User_Thread(struct User_Context* userContext, bool detached)
      * - Call Make_Runnable_Atomic() to schedule the process
      *   for execution
      */
-    TODO("Start user thread");
+    struct Kernel_Thread* kthread = Create_Thread(PRIORITY_USER, detached);
+    if (kthread != 0) {
+        /*
+         * Create the initial context for the thread to make
+         * it schedulable.
+         */
+        Setup_User_Thread(kthread, userContext);
+
+        /* Atomically put the thread on the run queue. */
+        Make_Runnable_Atomic(kthread);
+    }
+
+    return kthread;
 }
 
 /*
@@ -529,6 +598,9 @@ void Make_Runnable(struct Kernel_Thread* kthread)
     KASSERT(!Interrupts_Enabled());
 
     { int currentQ = kthread->currentReadyQueue;
+      
+      if(g_currentSchedulingPolicy == RR)currentQ=0;
+      else if(IdleThread->pid == kthread->pid)currentQ=MAX_QUEUE_LEVEL-1; //estoy en mlf
       KASSERT(currentQ >= 0 && currentQ < MAX_QUEUE_LEVEL);
       kthread->blocked = false;
       Enqueue_Thread(&s_runQueue[currentQ], kthread);
@@ -560,15 +632,86 @@ struct Kernel_Thread* Get_Current(void)
  */
 struct Kernel_Thread* Get_Next_Runnable(void)
 {
-    struct Kernel_Thread* best = 0;
+    struct Kernel_Thread * next = IdleThread;
+    static ulong_t counterStarvationCheck=0;
+    
+    KASSERT(g_currentSchedulingPolicy==RR || g_currentSchedulingPolicy==MLF); // schedule policy desconocido;
+    
+    // si cambio de MLR a RR tengo que pegar las colas
+    if (g_currentSchedulingPolicy != g_prevSchedulingPolicy){
+        if (g_currentSchedulingPolicy == RR){
+            int i;
+            for (i=MAX_QUEUE_LEVEL-1; i>0; i--)
+            {
+                Append_Thread_Queue(&s_runQueue[i-1],&s_runQueue[i]);
+            }
+        }
+        else { //cambio de RR a MLF tengo todos los procesos en la primer cola, mando el Idle a la ultima
+            Remove_Thread(&s_runQueue[0], IdleThread);
+            Enqueue_Thread(&s_runQueue[MAX_QUEUE_LEVEL-1], IdleThread);
+        }
+    }
 
-    /* Find the best thread from the highest-priority run queue */
-    TODO("Find a runnable thread from run queues");
+    /*
+     * Round Robin
+     */
+    
+    if (g_currentSchedulingPolicy==RR){
+        next = Find_Best(&s_runQueue[0]);
+        if(next != NULL){
+            Remove_Thread(&s_runQueue[0], next);
+        }
+    }
 
-/*
- *    Print("Scheduling %x\n", best);
- */
-    return best;
+    /*
+     * Multi-level Feedback
+     */
+    else {
+        int i;
+        for(i=0; i<MAX_QUEUE_LEVEL; i++)
+        {
+            next = Get_Front_Of_Thread_Queue(&s_runQueue[i]);// no si usar (Find_Best(&s_runQueue[i])) porque me gusta mas ir rotando
+            if (next != NULL){
+                Remove_Thread(&s_runQueue[i], next);
+                break;
+            }
+        }
+    /* chequeo de procesos que no se ejecutan nunca */
+        ++counterStarvationCheck;
+        if(counterStarvationCheck > TIME_TO_STARVATION_CHECK){
+            counterStarvationCheck=0;//comoienza a contar de nuevo el tiempo para el proximo chequeo
+            ulong_t starvation_mark= TIME_TO_STARVATION_CHECK + 1; //este es el valor que uso como marca para saber si un proceso se    
+                                                                   //ejecuto desde el ultimo chequeo
+            struct Kernel_Thread* checked_Thread=Get_Front_Of_Thread_Queue(&s_runQueue[MAX_QUEUE_LEVEL-1]);
+            for(i=MAX_QUEUE_LEVEL-1; i>=0;--i)
+            {
+                while(checked_Thread!=NULL)
+                {
+                    if(checked_Thread==IdleThread)break; /* si es el Idle, no lo muevo */
+                    if(checked_Thread->numTicks== starvation_mark){ 
+                    /*si esta en -1 significa que no se ejecuto desde el ultimo chequeo, lo promociono un nivel de cola*/
+                        if(checked_Thread->currentReadyQueue>0){
+                            --checked_Thread->currentReadyQueue;
+                            Remove_Thread(&s_runQueue[i], checked_Thread);
+                            Enqueue_Thread(&s_runQueue[i-1], checked_Thread);
+                        }
+                    }
+                    else
+                        /* marco el hilo para saber si se ejecuto en el proximo chequeo */
+                        checked_Thread->numTicks=starvation_mark;               
+
+                    checked_Thread = Get_Next_In_Thread_Queue(checked_Thread);
+                }
+            }
+            
+        }
+    }
+    
+    next->numTicks=0; 
+    /* no esta mas en lowlevel, lo pongo en cero aca,es importante 
+    porque puede estar en -1 si lo marco el chequeo de starvation
+    y contaria un tick de ejecucion menos*/
+    return next;
 }
 
 /*
@@ -608,6 +751,7 @@ void Schedule(void)
 void Yield(void)
 {
     Disable_Interrupts();
+    if(g_currentThread->pid != IdleThread->pid && g_currentThread->currentReadyQueue>0) --g_currentThread->currentReadyQueue;
     Make_Runnable(g_currentThread);
     Schedule();
     Enable_Interrupts();
@@ -730,6 +874,8 @@ void Wait(struct Thread_Queue* waitQueue)
 
     /* Add the thread to the wait queue. */
     current->blocked = true;
+    //el idle no hace wait, pero por si lo cambian...
+    if(current->pid != IdleThread->pid && current->currentReadyQueue>0) --current->currentReadyQueue;
     Enqueue_Thread(waitQueue, current);
 
     /* Find another thread to run. */

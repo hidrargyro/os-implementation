@@ -231,7 +231,7 @@ Handle_Interrupt:
 	; clear numTicks field.
 	mov	eax, [g_currentThread]
 	mov	[eax+0], esp		; esp field
-	mov	[eax+4], dword 0	; numTicks field
+	;mov	[eax+4], dword 0	; numTicks field
 
 	; Pick a new thread to run, and switch to its stack
 	call	Get_Next_Runnable
