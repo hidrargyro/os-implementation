@@ -19,6 +19,6 @@ int main(int argc, char **argv)
     );
 */
     while(true)
-        Print_String("    B");
+        Print_String("C\n\n");
     return 0;
 }

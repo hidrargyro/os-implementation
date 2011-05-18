@@ -36,7 +36,7 @@ struct Process {
 char *Strip_Leading_Whitespace(char *s);
 void Trim_Newline(char *s);
 char *Copy_Token(char *token, char *s);
-int Build_Pipeline(char *command, struct Process procList[]);
+int Build_Pipeline(char **command, struct Process procList[]);
 void Spawn_Single_Command(struct Process procList[], int nproc, const char *path);
 
 /* Maximum number of processes allowed in a pipeline. */
@@ -50,20 +50,22 @@ int main(int argc, char **argv)
     char commandBuf[BUFSIZE+1];
     struct Process procList[MAXPROC];
     char path[BUFSIZE+1] = DEFAULT_PATH;
-    char *command;
+    char *command="";
 
     /* Set attribute to gray on black. */
     Print("\x1B[37m");
 
     while (true) {
-	/* Print shell prompt (bright cyan on black background) */
-	Print("\x1B[1;36m$\x1B[37m ");
 
 	/* Read a line of input */
-	Read_Line(commandBuf, sizeof(commandBuf));
-	command = Strip_Leading_Whitespace(commandBuf);
+	if(strcmp(command,"")==0) {
+    	/* Print shell prompt (bright cyan on black background) */
+    	Print("\x1B[1;36mJorge$\x1B[37m ");
+    	Read_Line(commandBuf, sizeof(commandBuf));
+    	command = Strip_Leading_Whitespace(commandBuf);
+    }
 	Trim_Newline(command);
-
+    //Print("c: %s\n", command);
 	/*
 	 * Handle some special commands
 	 */
@@ -91,11 +93,12 @@ int main(int argc, char **argv)
 	 * Parse the command string and build array of
 	 * Process structs representing a pipeline of commands.
 	 */
-	nproc = Build_Pipeline(command, procList);
+	nproc = Build_Pipeline(&command, procList);
 	if (nproc <= 0)
 	    continue;
-
+    
 	Spawn_Single_Command(procList, nproc, path);
+	//Print("e: %s\n", command);
     }
 
     Print_String("DONE!\n");
@@ -148,22 +151,21 @@ char *Copy_Token(char *token, char *s)
 /*
  * Build process pipeline.
  */
-int Build_Pipeline(char *command, struct Process procList[])
+int Build_Pipeline(char **command_pointer, struct Process procList[])
 {
     int nproc = 0, i;
-
+    char *command=*command_pointer;
     while (nproc < MAXPROC) {
         struct Process *proc = &procList[nproc];
         char *p, *s;
 
         proc->flags = 0;
-
+        
         command = Strip_Leading_Whitespace(command);
         p = command;
 
         if (strcmp(p, "") == 0)
 	    break;
-
         ++nproc;
 
         s = strpbrk(p, "<>|");
@@ -200,24 +202,37 @@ int Build_Pipeline(char *command, struct Process procList[])
 	        p = s;
 	    }
         }
-
-        proc->command = command;
+        
+        
         /*Print("command=%s\n", command);*/
-        if (!Copy_Token(proc->program, command)) {
-	    Print("Error: invalid command\n");
-	    return -1;
+        char *next;
+        if (!(next=Copy_Token(proc->program, command))) {
+    	    Print("Error: invalid command\n");
+    	    return -1;
         }
-
+        else {
+            next=Strip_Leading_Whitespace(next);
+            if (next[0]=='&') {
+                proc->command = proc->program;
+     	        *command_pointer=Strip_Leading_Whitespace(next+1);
+     	        //++nproc;
+    	        break;
+    	    }
+    	}
+    	//strcpy(proc->command,proc->program);
+    	
+        proc->command = command;//hacer un append con copy_token hasta llegar a &, asi guardo los comandos
+        //Print("%s\n",p);
         if (p == command)
-	    command = "";
+	    *command_pointer="";
         else
 	    command = p;
     }
 
-    if (strcmp(command,"") != 0) {
+/*    if (strcmp(command,"") != 0) {
 	Print("Error: too many commands in pipeline\n");
 	return -1;
-    }
+    }*/
 
 #if 0
     for (i = 0; i < nproc; ++i) {
@@ -250,7 +265,7 @@ int Build_Pipeline(char *command, struct Process procList[])
 	    return -1;
 	}
     }
-
+    
     return nproc;
 }
 
@@ -261,24 +276,22 @@ void Spawn_Single_Command(struct Process procList[], int nproc, const char *path
 {
     int pid;
 
-    if (nproc > 1) {
+/*    if (nproc > 1) {
 	Print("Error: pipes not supported yet\n");
 	return;
-    }
+    }*/
     if (procList[0].flags & (INFILE|OUTFILE)) {
 	Print("Error: I/O redirection not supported yet\n");
 	return;
     }
-
-    pid = Spawn_With_Path(procList[0].program, procList[0].command,
-	path);
+    pid = Spawn_With_Path(procList[0].program, procList[0].command,path);
     if (pid < 0)
 	Print("Could not spawn process: %s\n", Get_Error_String(pid));
-    else {
+/*    else {
 	int exitCode = Wait(pid);
 	if (exitCodes)
 	    Print("Exit code was %d\n", exitCode);
-    }
+    }*/
 }
 
 

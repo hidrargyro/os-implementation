@@ -12,6 +12,6 @@ int main(int argc, char** argv)
 	Print("Arg %d is %s\n", i,argv[i]);
     }*/
     while(true)
-        Print_String("B");
+        Print_String("B\n");
     return 1;
 }
