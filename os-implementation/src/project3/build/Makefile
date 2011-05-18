@@ -55,7 +55,7 @@ KERNEL_C_SRCS := idt.c int.c trap.c irq.c io.c \
 	mem.c crc32.c \
 	gdt.c tss.c segment.c \
 	bget.c malloc.c \
-	synch.c kthread.c \
+	synch.c kthread.c semaphore.c\
 	user.c $(USER_IMP_C) argblock.c syscall.c dma.c floppy.c \
 	elf.c blockdev.c ide.c \
 	vfs.c pfat.c bitset.c \

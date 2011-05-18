@@ -17,7 +17,7 @@
 #include <geekos/kthread.h>
 #include <geekos/malloc.h>
 #include <geekos/user.h>
-
+#include <geekos/semaphore.h>
 
 
 /*
@@ -28,6 +28,9 @@
 
 
 #define TIME_TO_STARVATION_CHECK 100000
+
+ulong_t starvation_mark= TIME_TO_STARVATION_CHECK + 1; //este es el valor que uso como marca para saber si un proceso se    
+                                                       //ejecuto desde el ultimo chequeo
 int g_currentSchedulingPolicy = RR;
 int g_prevSchedulingPolicy = RR;
 
@@ -181,6 +184,7 @@ static void Destroy_Thread(struct Kernel_Thread* kthread)
 
     /* Dispose of the thread's memory. */
     Disable_Interrupts();
+    unbindSemaphore(g_currentThread);
     Free_Page(kthread->stackPage);
     Free_Page(kthread);
 
@@ -647,8 +651,10 @@ struct Kernel_Thread* Get_Next_Runnable(void)
             }
         }
         else { //cambio de RR a MLF tengo todos los procesos en la primer cola, mando el Idle a la ultima
-            Remove_Thread(&s_runQueue[0], IdleThread);
-            Enqueue_Thread(&s_runQueue[MAX_QUEUE_LEVEL-1], IdleThread);
+            if(Is_Member_Of_Thread_Queue(&s_runQueue[0], IdleThread)) {
+                Remove_Thread(&s_runQueue[0], IdleThread);
+                Enqueue_Thread(&s_runQueue[MAX_QUEUE_LEVEL-1], IdleThread);
+            }
         }
     }
 
@@ -680,8 +686,6 @@ struct Kernel_Thread* Get_Next_Runnable(void)
         ++counterStarvationCheck;
         if(counterStarvationCheck > TIME_TO_STARVATION_CHECK){
             counterStarvationCheck=0;//comoienza a contar de nuevo el tiempo para el proximo chequeo
-            ulong_t starvation_mark= TIME_TO_STARVATION_CHECK + 1; //este es el valor que uso como marca para saber si un proceso se    
-                                                                   //ejecuto desde el ultimo chequeo
             struct Kernel_Thread* checked_Thread=Get_Front_Of_Thread_Queue(&s_runQueue[MAX_QUEUE_LEVEL-1]);
             for(i=MAX_QUEUE_LEVEL-1; i>=0;--i)
             {
@@ -709,8 +713,8 @@ struct Kernel_Thread* Get_Next_Runnable(void)
     
     next->numTicks=0; 
     /* no esta mas en lowlevel, lo pongo en cero aca,es importante 
-    porque puede estar en -1 si lo marco el chequeo de starvation
-    y contaria un tick de ejecucion menos*/
+    porque puede estar en marcado el chequeo de starvation
+    y contaria mal los tick de ejecucion*/
     return next;
 }
 

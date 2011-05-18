@@ -6,10 +6,12 @@
 
 int main(int argc, char** argv)
 {
-    int i;
+/*    int i;
     Print_String("I am the b program\n");
     for (i = 0; i < argc; ++i) {
 	Print("Arg %d is %s\n", i,argv[i]);
-    }
+    }*/
+    while(true)
+        Print_String("B");
     return 1;
 }

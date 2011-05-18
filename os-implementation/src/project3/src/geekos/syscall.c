@@ -20,6 +20,7 @@
 #include <geekos/user.h>
 #include <geekos/timer.h>
 #include <geekos/vfs.h>
+#include <geekos/semaphore.h>
 
 /*
  * Null system call.
@@ -285,8 +286,26 @@ static int Sys_GetTimeOfDay(struct Interrupt_State* state)
  */
 static int Sys_CreateSemaphore(struct Interrupt_State* state)
 {
-    TODO("CreateSemaphore system call");
-    return 0;
+    char *semaphore_name = NULL;
+    ulong_t len = state->ecx;
+
+    if (len > 25){
+        return -1;
+    }
+
+    semaphore_name = Malloc(sizeof(char) * len + 1);
+    if (semaphore_name == NULL) {
+        return -1;
+    }
+
+    if (!Copy_From_User(semaphore_name, state->ebx, len)) {
+        Free(semaphore_name);
+        return -1;
+    } 
+    //Disable_Interrupts();
+    int result =  CreateSemaphore(semaphore_name); 
+    //Enable_Interrupts();
+    return result;
 }
 
 /*
@@ -300,8 +319,7 @@ static int Sys_CreateSemaphore(struct Interrupt_State* state)
  */
 static int Sys_P(struct Interrupt_State* state)
 {
-    TODO("P (semaphore acquire) system call");
-    return 0;
+    return P(state->ebx);
 }
 
 /*
@@ -313,8 +331,7 @@ static int Sys_P(struct Interrupt_State* state)
  */
 static int Sys_V(struct Interrupt_State* state)
 {
-    TODO("V (semaphore release) system call");
-    return 0;
+    return V(state->ebx);
 }
 
 /*
@@ -326,8 +343,8 @@ static int Sys_V(struct Interrupt_State* state)
  */
 static int Sys_DestroySemaphore(struct Interrupt_State* state)
 {
-    TODO("DestroySemaphore system call");
-    return 0;
+    return DestroySemaphore(state->ebx);
+
 }
 
 
